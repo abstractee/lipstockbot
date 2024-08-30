@@ -11,68 +11,57 @@ from binance import (
     ThreadedDepthCacheManager,
 )
 import os
+import pickle
 
 
 class DataDownloader:
 
-    def __init__(self, save_dir="data"):
+    def __init__(self, save_dir="data", pickle_file="all_tickers_data.pkl"):
         self.save_dir = save_dir
+        self.pickle_file = pickle_file
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
 
-    def _get_local_file_path(self, ticker):
-        return os.path.join(self.save_dir, f"{ticker}.csv")
+    def _get_pickle_file_path(self):
+        return os.path.join(self.save_dir, self.pickle_file)
 
-    def _load_local_data(self, ticker):
-        file_path = self._get_local_file_path(ticker)
+    def _load_local_data(self):
+        file_path = self._get_pickle_file_path()
         if os.path.exists(file_path):
-            return pd.read_csv(file_path, index_col="Date", parse_dates=True)
+            with open(file_path, "rb") as f:
+                return pickle.load(f)
         return None
 
-    def _save_local_data(self, ticker, data):
-        file_path = self._get_local_file_path(ticker)
-        data.to_csv(file_path)
-
-    def _merge_data(self, local_data, new_data):
-        if local_data is not None:
-            combined_data = (
-                pd.concat([local_data, new_data]).drop_duplicates().sort_index()
-            )
-        else:
-            combined_data = new_data
-        return combined_data
+    def _save_local_data(self, data):
+        file_path = self._get_pickle_file_path()
+        with open(file_path, "wb") as f:
+            pickle.dump(data, f)
 
     def download_data(self, tickers, start="2022-01-01", end=None):
         if end is None:
             end = datetime.today().strftime("%Y-%m-%d")
 
-        all_data = {}
-        for ticker in tickers:
-            local_data = self._load_local_data(ticker)
+        local_data = self._load_local_data()
 
-            if local_data is not None:
-                local_start = local_data.index.min().strftime("%Y-%m-%d")
-                local_end = local_data.index.max().strftime("%Y-%m-%d")
+        if local_data is not None:
+            local_start = local_data.index.min().strftime("%Y-%m-%d")
+            local_end = local_data.index.max().strftime("%Y-%m-%d")
 
-                if local_start <= start and local_end >= end:
-                    # Data exists locally, use it
-                    data = local_data[
-                        (local_data.index >= start) & (local_data.index <= end)
-                    ]
-                else:
-                    # Data partially exists, fetch missing parts
-                    missing_start = start if local_start > start else local_end
-                    new_data = yf.download(ticker, start=missing_start, end=end)
-                    data = self._merge_data(local_data, new_data)
-                    self._save_local_data(ticker, data)
+            if local_start <= start and local_end >= end:
+                # Data exists locally and covers the required date range
+                data = local_data[
+                    (local_data.index >= start) & (local_data.index <= end)
+                ]
             else:
-                # No local data, fetch everything
-                data = yf.download(ticker, start=start, end=end)
-                self._save_local_data(ticker, data)
+                # Data is not up to date, re-download everything
+                data = yf.download(tickers=tickers, start=start, end=end)
+                self._save_local_data(data)
+        else:
+            # No local data, fetch everything
+            data = yf.download(tickers=tickers, start=start, end=end)
+            self._save_local_data(data)
 
-            all_data[ticker] = data
-
-        return all_data
+        return data
 
 
 class TradingPlatform(ABC):
@@ -237,6 +226,9 @@ class LipstickBot:
 
     def download_data(self, tickers, start="2022-01-01", end=None):
         data = self.downloader.download_data(tickers, start, end)
+        # if end is None:
+        #     end = datetime.today().strftime("%Y-%m-%d")
+        # data = yf.download(tickers=tickers, start=start, end=end)
         return data
 
     def analyze_lipstick_index(self, data):
