@@ -47,7 +47,7 @@ class DataDownloader:
             end = datetime.today().strftime("%Y-%m-%d")
 
         all_data = {}
-        for ticker in tickers.split():
+        for ticker in tickers:
             local_data = self._load_local_data(ticker)
 
             if local_data is not None:
