@@ -54,11 +54,13 @@ class DataDownloader:
                 ]
             else:
                 # Data is not up to date, re-download everything
-                data = yf.download(tickers=tickers, start=start, end=end)
+                data = yf.download(
+                    tickers=tickers, start=start, end=end, ignore_tz=False
+                )
                 self._save_local_data(data)
         else:
             # No local data, fetch everything
-            data = yf.download(tickers=tickers, start=start, end=end)
+            data = yf.download(tickers=tickers, start=start, end=end, ignore_tz=False)
             self._save_local_data(data)
 
         return data
@@ -170,15 +172,16 @@ class BinancePlatform(TradingPlatform):
 
 
 class TestPlatform(TradingPlatform):
-    def __init__(self, assets: Dict[str, float]):
+    def __init__(self, assets: Dict[str, float], cash: float = 10000.0):
         super().__init__(assets)
-        self.price_data = {}
+        self.price_data = None
+        self.cash = cash
 
     def load_price_data(self, start_date, end_date):
         tickers = list(self.assets.keys())
-        self.price_data = yf.download(tickers, start=start_date, end=end_date)[
-            "Adj Close"
-        ]
+        self.price_data = yf.download(
+            tickers, start=start_date, end=end_date, ignore_tz=False
+        )["Adj Close"]
 
     def get_current_price(self, asset: str, date=None) -> float:
         if date is None:
@@ -231,18 +234,23 @@ class LipstickBot:
         # data = yf.download(tickers=tickers, start=start, end=end)
         return data
 
-    def analyze_lipstick_index(self, data):
+    def analyze_lipstick_index(self, data, date=None):
         daily_returns = data["Adj Close"].pct_change().dropna()
 
         lipstick_index = daily_returns[list(self.lipstick_companies.values())].mean(
             axis=1
         )
+        lipstick_index.index = lipstick_index.index.tz_convert("UTC")
+
         ma5 = lipstick_index.rolling(window=5).mean()
         ma20 = lipstick_index.rolling(window=20).mean()
 
-        latest_li = lipstick_index.iloc[-1]
-        latest_ma5 = ma5.iloc[-1]
-        latest_ma20 = ma20.iloc[-1]
+        if date is None:
+            date = lipstick_index.index[-1]
+
+        latest_li = lipstick_index.loc[date]
+        latest_ma5 = ma5.loc[date]
+        latest_ma20 = ma20.loc[date]
 
         if latest_li > latest_ma20 and latest_ma5 > latest_ma20:
             market_sentiment = "Bullish"
@@ -276,28 +284,28 @@ class LipstickBot:
 
         return signals
 
-    def execute_trades(self, signals):
+    def execute_trades(self, signals, date=None):
         for platform in self.platforms:
             platform_name = type(platform).__name__
             for asset, signal in signals[platform_name].items():
-                current_price = platform.get_current_price(asset)
+                current_price = platform.get_current_price(asset, date)
                 if current_price == 0:
                     continue  # Skip if we couldn't get the current price
 
                 if signal == "BUY":
                     amount = 100 / current_price  # Buy $100 worth
-                    platform.buy(asset, amount)
+                    platform.buy(asset, amount, date)
                 elif signal == "SELL":
                     amount = min(
                         50 / current_price, platform.assets[asset]
                     )  # Sell $50 worth or all holdings
-                    platform.sell(asset, amount)
+                    platform.sell(asset, amount, date)
 
-    def generate_recommendations(self):
+    def generate_recommendations(self, date=None):
         lipstick_data = self.download_data(list(self.lipstick_companies.values()))
-        lipstick_index_result = self.analyze_lipstick_index(lipstick_data)
+        lipstick_index_result = self.analyze_lipstick_index(lipstick_data, date)
         signals = self.generate_trading_signals(lipstick_index_result)
-        self.execute_trades(signals)
+        self.execute_trades(signals, date)
 
         current_holdings = {
             type(platform).__name__: platform.assets for platform in self.platforms
@@ -372,14 +380,18 @@ if __name__ == "__main__":
 
     test_platform = TestPlatform(test_assets)
 
-    bot = LipstickBot([test_assets])
+    bot = LipstickBot([test_platform])
 
     # Generate recommendations for the latest date
-    recommendations = bot.generate_recommendations()
-    print("Latest Recommendations:")
-    print(recommendations)
+    # recommendations = bot.generate_recommendations()
+    # print("Latest Recommendations:")
+    # print(recommendations)
 
     # Backtest
-    backtest_results = bot.backtest("2022-01-01", "2023-12-31")
+
+    start_date = pd.to_datetime("2022-01-03").tz_localize("UTC")
+    end_date = pd.to_datetime("2023-12-31").tz_localize("UTC")
+
+    backtest_results = bot.backtest(start_date, end_date)
     print("\nBacktest Results:")
     print(backtest_results)
