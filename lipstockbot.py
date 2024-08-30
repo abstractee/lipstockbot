@@ -255,6 +255,39 @@ class LipstickBot:
             "current_holdings": current_holdings,
         }
 
+    def backtest(self, start_date, end_date):
+        # Load price data for the entire period
+        for platform in self.platforms:
+            if isinstance(platform, TestPlatform):
+                platform.load_price_data(start_date, end_date)
+
+        date_range = pd.date_range(start=start_date, end=end_date, freq="B")
+        portfolio_values = []
+
+        for date in date_range:
+            self.generate_recommendations(date)
+
+            # Calculate portfolio value
+            portfolio_value = sum(platform.cash for platform in self.platforms)
+            for platform in self.platforms:
+                for asset, amount in platform.assets.items():
+                    portfolio_value += amount * platform.get_current_price(asset, date)
+
+            portfolio_values.append(portfolio_value)
+
+        # Calculate performance metrics
+        returns = pd.Series(portfolio_values).pct_change()
+        total_return = (portfolio_values[-1] - portfolio_values[0]) / portfolio_values[
+            0
+        ]
+        sharpe_ratio = np.sqrt(252) * returns.mean() / returns.std()
+
+        return {
+            "Total Return": f"{total_return:.2%}",
+            "Sharpe Ratio": f"{sharpe_ratio:.2f}",
+            "Final Portfolio Value": f"${portfolio_values[-1]:,.2f}",
+        }
+
 
 if __name__ == "__main__":
     # Usage
