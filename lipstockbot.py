@@ -12,6 +12,68 @@ from binance import (
 )
 
 
+class DataDownloader:
+
+    def __init__(self, save_dir="data"):
+        self.save_dir = save_dir
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+    def _get_local_file_path(self, ticker):
+        return os.path.join(self.save_dir, f"{ticker}.csv")
+
+    def _load_local_data(self, ticker):
+        file_path = self._get_local_file_path(ticker)
+        if os.path.exists(file_path):
+            return pd.read_csv(file_path, index_col="Date", parse_dates=True)
+        return None
+
+    def _save_local_data(self, ticker, data):
+        file_path = self._get_local_file_path(ticker)
+        data.to_csv(file_path)
+
+    def _merge_data(self, local_data, new_data):
+        if local_data is not None:
+            combined_data = (
+                pd.concat([local_data, new_data]).drop_duplicates().sort_index()
+            )
+        else:
+            combined_data = new_data
+        return combined_data
+
+    def download_data(self, tickers, start="2022-01-01", end=None):
+        if end is None:
+            end = datetime.today().strftime("%Y-%m-%d")
+
+        all_data = {}
+        for ticker in tickers.split():
+            local_data = self._load_local_data(ticker)
+
+            if local_data is not None:
+                local_start = local_data.index.min().strftime("%Y-%m-%d")
+                local_end = local_data.index.max().strftime("%Y-%m-%d")
+
+                if local_start <= start and local_end >= end:
+                    # Data exists locally, use it
+                    data = local_data[
+                        (local_data.index >= start) & (local_data.index <= end)
+                    ]
+                else:
+                    # Data partially exists, fetch missing parts
+                    missing_start = start if local_start > start else local_end
+                    new_data = yf.download(ticker, start=missing_start, end=end)
+                    data = self._merge_data(local_data, new_data)
+                    self._save_local_data(ticker, data)
+            else:
+                # No local data, fetch everything
+                data = yf.download(ticker, start=start, end=end)
+                self._save_local_data(ticker, data)
+
+            all_data[ticker] = data
+
+        return all_data
+
+
 class TradingPlatform(ABC):
     def __init__(self, assets: Dict[str, float]):
         self.assets = assets
@@ -170,11 +232,10 @@ class LipstickBot:
             "Inter Parfums": "IPAR",
         }
         self.platforms = platforms
+        self.downloader = DataDownloader()
 
     def download_data(self, tickers, start="2022-01-01", end=None):
-        if end is None:
-            end = datetime.today().strftime("%Y-%m-%d")
-        data = yf.download(tickers=tickers, start=start, end=end)
+        data = self.download_data(tickers, start, end)
         return data
 
     def analyze_lipstick_index(self, data):
@@ -291,21 +352,41 @@ class LipstickBot:
 
 if __name__ == "__main__":
     # Usage
-    alpaca_assets = {"AAPL": 100, "GOOG": 50, "MSFT": 75, "AMZN": 30, "FB": 60}
+    # alpaca_assets = {"AAPL": 100, "GOOG": 50, "MSFT": 75, "AMZN": 30, "FB": 60}
 
-    binance_assets = {"BTCUSDT": 1.5, "ETHUSDT": 10, "ADAUSDT": 5000, "XRPUSDT": 10000}
+    # binance_assets = {"BTCUSDT": 1.5, "ETHUSDT": 10, "ADAUSDT": 5000, "XRPUSDT": 10000}
 
-    alpaca_platform = AlpacaPlatform(
-        "your_alpaca_api_key",
-        "your_alpaca_secret_key",
-        "https://paper-api.alpaca.markets",
-        alpaca_assets,
-    )
+    # alpaca_platform = AlpacaPlatform(
+    #     "your_alpaca_api_key",
+    #     "your_alpaca_secret_key",
+    #     "https://paper-api.alpaca.markets",
+    #     alpaca_assets,
+    # )
 
-    binance_platform = BinancePlatform(
-        "your_binance_api_key", "your_binance_secret_key", binance_assets
-    )
+    # binance_platform = BinancePlatform(
+    #     "your_binance_api_key", "your_binance_secret_key", binance_assets
+    # )
 
-    bot = LipstickBot([alpaca_platform, binance_platform])
+    test_assets = {
+        "AAPL": 100,
+        "GOOG": 50,
+        "MSFT": 75,
+        "AMZN": 30,
+        "META": 60,
+        "BTC-USD": 1.5,
+        "ETH-USD": 10,
+    }
+
+    test_platform = TestPlatform(test_assets)
+
+    bot = LipstickBot([test_assets])
+
+    # Generate recommendations for the latest date
     recommendations = bot.generate_recommendations()
+    print("Latest Recommendations:")
     print(recommendations)
+
+    # Backtest
+    backtest_results = bot.backtest("2022-01-01", "2023-12-31")
+    print("\nBacktest Results:")
+    print(backtest_results)
