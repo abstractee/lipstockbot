@@ -236,7 +236,7 @@ class LipstickBot:
         self.downloader = DataDownloader()
 
     def download_data(self, tickers, start="2022-01-01", end=None):
-        data = self.download_data(tickers, start, end)
+        data = self.downloader.download_data(tickers, start, end)
         return data
 
     def analyze_lipstick_index(self, data):
