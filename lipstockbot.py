@@ -117,6 +117,46 @@ class BinancePlatform(TradingPlatform):
             return 0.0
 
 
+class TestPlatform(TradingPlatform):
+    def __init__(self, assets: Dict[str, float]):
+        super().__init__(assets)
+        self.price_data = {}
+
+    def load_price_data(self, start_date, end_date):
+        tickers = list(self.assets.keys())
+        self.price_data = yf.download(tickers, start=start_date, end=end_date)[
+            "Adj Close"
+        ]
+
+    def get_current_price(self, asset: str, date=None) -> float:
+        if date is None:
+            date = self.price_data.index[-1]
+        return self.price_data.loc[date, asset]
+
+    def buy(self, asset: str, amount: float, date=None):
+        if date is None:
+            date = self.price_data.index[-1]
+        price = self.get_current_price(asset, date)
+        cost = price * amount
+        if self.cash >= cost:
+            self.cash -= cost
+            self.assets[asset] += amount
+            print(f"Bought {amount} of {asset} at {price} on {date}")
+        else:
+            print(f"Insufficient cash to buy {amount} of {asset}")
+
+    def sell(self, asset: str, amount: float, date=None):
+        if date is None:
+            date = self.price_data.index[-1]
+        if self.assets[asset] >= amount:
+            price = self.get_current_price(asset, date)
+            self.cash += price * amount
+            self.assets[asset] -= amount
+            print(f"Sold {amount} of {asset} at {price} on {date}")
+        else:
+            print(f"Insufficient {asset} to sell")
+
+
 class LipstickBot:
     def __init__(self, platforms: List[TradingPlatform]):
         self.lipstick_companies = {
