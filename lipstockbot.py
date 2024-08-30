@@ -10,6 +10,7 @@ from binance import (
     ThreadedWebsocketManager,
     ThreadedDepthCacheManager,
 )
+import os
 
 
 class DataDownloader:
