@@ -1,7 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from abc import ABC, abstractmethod
 from typing import Dict, List
 from alpaca.trading.client import TradingClient
@@ -37,28 +37,73 @@ class DataDownloader:
         with open(file_path, "wb") as f:
             pickle.dump(data, f)
 
-    def download_data(self, tickers, start="2022-01-01", end=None):
+    def download_data(self, tickers, start=None, end=None):
         if end is None:
             end = datetime.today().strftime("%Y-%m-%d")
 
+        if start is None:
+            start = (datetime.today() - timedelta(days=365 * 5)).strftime("%Y-%m-%d")
+        # Convert to string format "%Y-%m-%d"
+        start = pd.to_datetime(start).strftime("%Y-%m-%d")
+        end = pd.to_datetime(end).strftime("%Y-%m-%d")
+
+        # Convert to pandas datetime with UTC timezone
+        start = pd.to_datetime(start).tz_localize("UTC")
+        end = pd.to_datetime(end).tz_localize("UTC")
+
+        print(f"downloading for {tickers} from {start} to {end}")
         local_data = self._load_local_data()
 
         if local_data is not None:
             local_start = local_data.index.min().strftime("%Y-%m-%d")
             local_end = local_data.index.max().strftime("%Y-%m-%d")
+            local_start = pd.to_datetime(local_start).tz_localize("UTC")
+            local_end = pd.to_datetime(local_end).tz_localize("UTC")
+            existing_tickers = set(
+                local_data.columns.levels[1]
+            )  # Assuming MultiIndex columns
+            new_tickers = set(tickers) - existing_tickers
 
-            if local_start <= start and local_end >= end:
-                # Data exists locally and covers the required date range
+            if local_start <= start and local_end >= end and not new_tickers:
+                # Data exists locally and covers the required date range and tickers
                 data = local_data[
                     (local_data.index >= start) & (local_data.index <= end)
                 ]
+                print("date not within")
             else:
-                # Data is not up to date, re-download everything
-                data = yf.download(
-                    tickers=tickers, start=start, end=end, ignore_tz=False
-                )
-                self._save_local_data(data)
+                # Data is not up to date or new tickers are requested
+                print("data not uptodates")
+                if new_tickers:
+                    print("new tickers")
+                    # Download data for new tickers using local date boundaries
+                    new_data = yf.download(
+                        tickers=list(new_tickers),
+                        start=local_start,
+                        end=local_end,
+                        ignore_tz=False,
+                    )
+                    # Merge new data with existing data
+                    merged_data = pd.concat([local_data, new_data], axis=1)
+                else:
+                    merged_data = local_data
+
+                # Download any missing data for the requested date range
+                if start < local_start or end > local_end:
+                    additional_data = yf.download(
+                        tickers=tickers, start=start, end=end, ignore_tz=False
+                    )
+                    merged_data = (
+                        pd.concat([merged_data, additional_data])
+                        .sort_index()
+                        .drop_duplicates()
+                    )
+
+                self._save_local_data(merged_data)
+                data = merged_data[
+                    (merged_data.index >= start) & (merged_data.index <= end)
+                ]
         else:
+            print("fetching")
             # No local data, fetch everything
             data = yf.download(tickers=tickers, start=start, end=end, ignore_tz=False)
             self._save_local_data(data)
@@ -176,12 +221,14 @@ class TestPlatform(TradingPlatform):
         super().__init__(assets)
         self.price_data = None
         self.cash = cash
+        self.downloader = DataDownloader()
 
     def load_price_data(self, start_date, end_date):
         tickers = list(self.assets.keys())
-        self.price_data = yf.download(
-            tickers, start=start_date, end=end_date, ignore_tz=False
+        self.price_data = self.downloader.download_data(
+            tickers, start=start_date, end=end_date
         )["Adj Close"]
+        # yf.download(tickers, start=start_date, end=end_date, ignore_tz=False)
 
     def get_current_price(self, asset: str, date=None) -> float:
         if date is None:
@@ -227,7 +274,7 @@ class LipstickBot:
         self.platforms = platforms
         self.downloader = DataDownloader()
 
-    def download_data(self, tickers, start="2022-01-01", end=None):
+    def download_data(self, tickers, start=None, end=None):
         data = self.downloader.download_data(tickers, start, end)
         # if end is None:
         #     end = datetime.today().strftime("%Y-%m-%d")
@@ -240,26 +287,25 @@ class LipstickBot:
         lipstick_index = daily_returns[list(self.lipstick_companies.values())].mean(
             axis=1
         )
-        lipstick_index.index = lipstick_index.index.tz_convert("UTC")
+        lipstick_index.index = lipstick_index.index.normalize()
 
         ma5 = lipstick_index.rolling(window=5).mean()
         ma20 = lipstick_index.rolling(window=20).mean()
 
         if date is None:
-            # Use -1 to get the last index
-            date_index = -1
-        else:
-            # Convert both dates to datetime to ensure they are in the same format
-            last_index_date = pd.to_datetime(lipstick_index.index[-1])
-            date = pd.to_datetime(date)
-            date_difference = (last_index_date - date).days
-            # Calculate the date index by subtracting the difference from the last index
-            date_index = len(lipstick_index) - 1 - date_difference
+            date = lipstick_index.index[-1]
 
-        # Access the values using iloc and the calculated date_index
-        latest_li = lipstick_index.iloc[date_index]
-        latest_ma5 = ma5.iloc[date_index]
-        latest_ma20 = ma20.iloc[date_index]
+        dateend = lipstick_index.index[-1]
+        datestart = lipstick_index.index[0]
+        latest_li = None
+        latest_ma5 = None
+        latest_ma20 = None
+        try:
+            latest_li = lipstick_index.loc[date]
+            latest_ma5 = ma5.loc[date]
+            latest_ma20 = ma20.loc[date]
+        except KeyError:
+            return False
 
         if latest_li > latest_ma20 and latest_ma5 > latest_ma20:
             market_sentiment = "Bullish"
@@ -312,7 +358,11 @@ class LipstickBot:
 
     def generate_recommendations(self, date=None):
         lipstick_data = self.download_data(list(self.lipstick_companies.values()))
+
         lipstick_index_result = self.analyze_lipstick_index(lipstick_data, date)
+        if not lipstick_index_result:
+            return False
+
         signals = self.generate_trading_signals(lipstick_index_result)
         self.execute_trades(signals, date)
 
@@ -327,6 +377,11 @@ class LipstickBot:
         }
 
     def backtest(self, start_date, end_date):
+        # Use a business day offset to adjust the start and end dates if necessary
+        if not np.is_busday(start_date.date()):
+            start_date = pd.offsets.BDay().rollback(start_date)
+        if not np.is_busday(end_date.date()):
+            end_date = pd.offsets.BDay().rollback(end_date)
         # Load price data for the entire period
         for platform in self.platforms:
             if isinstance(platform, TestPlatform):
@@ -336,8 +391,9 @@ class LipstickBot:
         portfolio_values = []
 
         for date in date_range:
-            self.generate_recommendations(date)
-
+            date_recommendations = self.generate_recommendations(date)
+            if not date_recommendations:
+                continue
             # Calculate portfolio value
             portfolio_value = sum(platform.cash for platform in self.platforms)
             for platform in self.platforms:
@@ -398,7 +454,7 @@ if __name__ == "__main__":
 
     # Backtest
 
-    start_date = pd.to_datetime("2022-01-03").tz_localize("UTC")
+    start_date = pd.to_datetime("2022-01-01").tz_localize("UTC")
     end_date = pd.to_datetime("2023-12-31").tz_localize("UTC")
 
     backtest_results = bot.backtest(start_date, end_date)
