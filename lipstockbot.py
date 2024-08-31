@@ -51,7 +51,6 @@ class DataDownloader:
         start = pd.to_datetime(start).tz_localize("UTC")
         end = pd.to_datetime(end).tz_localize("UTC")
 
-        print(f"downloading for {tickers} from {start} to {end}")
         local_data = self._load_local_data()
 
         if local_data is not None:
@@ -69,12 +68,9 @@ class DataDownloader:
                 data = local_data[
                     (local_data.index >= start) & (local_data.index <= end)
                 ]
-                print("date not within")
             else:
                 # Data is not up to date or new tickers are requested
-                print("data not uptodates")
                 if new_tickers:
-                    print("new tickers")
                     # Download data for new tickers using local date boundaries
                     new_data = yf.download(
                         tickers=list(new_tickers),
@@ -103,7 +99,6 @@ class DataDownloader:
                     (merged_data.index >= start) & (merged_data.index <= end)
                 ]
         else:
-            print("fetching")
             # No local data, fetch everything
             data = yf.download(tickers=tickers, start=start, end=end, ignore_tz=False)
             self._save_local_data(data)
@@ -295,8 +290,6 @@ class LipstickBot:
         if date is None:
             date = lipstick_index.index[-1]
 
-        dateend = lipstick_index.index[-1]
-        datestart = lipstick_index.index[0]
         latest_li = None
         latest_ma5 = None
         latest_ma20 = None
@@ -446,13 +439,6 @@ if __name__ == "__main__":
     test_platform = TestPlatform(test_assets)
 
     bot = LipstickBot([test_platform])
-
-    # Generate recommendations for the latest date
-    # recommendations = bot.generate_recommendations()
-    # print("Latest Recommendations:")
-    # print(recommendations)
-
-    # Backtest
 
     start_date = pd.to_datetime("2022-01-01").tz_localize("UTC")
     end_date = pd.to_datetime("2023-12-31").tz_localize("UTC")
