@@ -246,11 +246,20 @@ class LipstickBot:
         ma20 = lipstick_index.rolling(window=20).mean()
 
         if date is None:
-            date = lipstick_index.index[-1]
+            # Use -1 to get the last index
+            date_index = -1
+        else:
+            # Convert both dates to datetime to ensure they are in the same format
+            last_index_date = pd.to_datetime(lipstick_index.index[-1])
+            date = pd.to_datetime(date)
+            date_difference = (last_index_date - date).days
+            # Calculate the date index by subtracting the difference from the last index
+            date_index = len(lipstick_index) - 1 - date_difference
 
-        latest_li = lipstick_index.loc[date]
-        latest_ma5 = ma5.loc[date]
-        latest_ma20 = ma20.loc[date]
+        # Access the values using iloc and the calculated date_index
+        latest_li = lipstick_index.iloc[date_index]
+        latest_ma5 = ma5.iloc[date_index]
+        latest_ma20 = ma20.iloc[date_index]
 
         if latest_li > latest_ma20 and latest_ma5 > latest_ma20:
             market_sentiment = "Bullish"
